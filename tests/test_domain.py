@@ -49,3 +49,13 @@ def test_context_with_current_event():
     context = Context(events=[event])
     assert context.events[-1] == event
     assert context.clip_path is None
+
+
+def test_event_rejects_naive_timestamp():
+    with pytest.raises(ValidationError):
+        Event(
+            id="evt_0001",
+            timestamp=datetime(2026, 10, 27, 12, 0),
+            frame_path="frames/evt_0001.jpg",
+            clip_path="clips/evt_0001.mjpeg",
+        )

@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, PositiveInt, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, PositiveInt, model_validator
 
 
 class EvidenceType(StrEnum):
@@ -29,7 +29,7 @@ class Event(BaseModel):
     """A camera event. Paths are plain strings; the prototype has no media files."""
 
     id: str
-    timestamp: datetime
+    timestamp: AwareDatetime  # naive timestamps are rejected
     frame_path: str
     clip_path: str
 
