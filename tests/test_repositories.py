@@ -1,9 +1,9 @@
 """Contract tests for the repositories.
 
 The `repos` fixture is parametrized over the backend and gives each test all
-four repositories from that one backend. The SQL backend (stage 3) gets the
-same tests by adding it to BACKENDS. Tests create the conditions and events
-they reference, so they also hold under real foreign keys.
+four repositories from that one backend. The SQL backend runs against the
+Postgres database in TEST_DATABASE_URL and is skipped without it. Tests create
+the conditions and events they reference, so they hold under real foreign keys.
 """
 
 from dataclasses import dataclass
@@ -24,6 +24,12 @@ from app.repositories.memory import (
     InMemoryConditionRepository,
     InMemoryEventRepository,
     InMemoryVerdictRepository,
+)
+from app.repositories.sql import (
+    SqlAlertRepository,
+    SqlConditionRepository,
+    SqlEventRepository,
+    SqlVerdictRepository,
 )
 
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
@@ -49,12 +55,20 @@ def memory_repos() -> Repos:
     )
 
 
-BACKENDS = {"memory": memory_repos}
+def sql_repos(sessions) -> Repos:
+    return Repos(
+        events=SqlEventRepository(sessions),
+        conditions=SqlConditionRepository(sessions),
+        verdicts=SqlVerdictRepository(sessions),
+        alerts=SqlAlertRepository(sessions),
+    )
 
 
-@pytest.fixture(params=list(BACKENDS))
+@pytest.fixture(params=["memory", "sql"])
 def repos(request) -> Repos:
-    return BACKENDS[request.param]()
+    if request.param == "memory":
+        return memory_repos()
+    return sql_repos(request.getfixturevalue("sql_sessions"))
 
 
 def make_event(event_id: str, seconds: int) -> Event:
@@ -144,7 +158,7 @@ def test_verdict_create_and_get(repos):
     assert repos.verdicts.get(verdict.id) == verdict
 
 
-def test_verdict_keeps_evidence_order(repos):
+def test_verdict_evidence_oldest_first(repos):
     condition = repos.conditions.create("loitering", FRAME_SPEC)
     e0, e1, e2 = add_events(repos, 0, 10, 20)
     verdict = repos.verdicts.create(condition.id, e2.id, UNSURE, [e0.id, e1.id, e2.id])
@@ -190,3 +204,11 @@ def test_alert_get_all_in_creation_order(repos):
     a = repos.alerts.create(c1.id)
     b = repos.alerts.create(c2.id)
     assert repos.alerts.get_all() == [a, b]
+
+
+def test_sql_verdict_rejects_unknown_evidence(sql_sessions):
+    repos = sql_repos(sql_sessions)
+    condition = repos.conditions.create("smoke", FRAME_SPEC)
+    (event,) = add_events(repos, 0)
+    with pytest.raises(ValueError, match="evt_missing"):
+        repos.verdicts.create(condition.id, event.id, YES, [event.id, "evt_missing"])

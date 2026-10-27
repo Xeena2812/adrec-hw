@@ -208,7 +208,7 @@ classDiagram
 
 - Naming: `create` / `get(id)` / `get_all(filters)` on every repository. `get_between` is the one extra, for the history query.
 - `get_between` returns events ordered by `timestamp` ascending, `start <= timestamp <= end`.
-- `VerdictRepository.create` writes the `verdicts` row and its `verdict_evidence` rows in one transaction.
+- `VerdictRepository.create` writes the `verdicts` row and its `verdict_evidence` rows in one transaction. Evidence is returned oldest first; the SQL repository sorts it by event timestamp (then id).
 
 ## 4. Database schema (one Postgres container)
 
@@ -252,7 +252,7 @@ erDiagram
     CONDITIONS ||--o{ ALERTS : "raises"
 ```
 
-Index *(Claude's call)*: `events (timestamp)` for the history query.
+Indexes *(Claude's call)*: `events (timestamp)` for the history query; `verdicts (condition_id)` and `verdicts (verdict)` for the `/verdicts` filters.
 
 ## 5. HTTP API (FastAPI)
 

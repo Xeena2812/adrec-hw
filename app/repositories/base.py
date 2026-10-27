@@ -54,7 +54,11 @@ class VerdictRepository(ABC):
         result: VLMResult,
         evidence_event_ids: list[str],
     ) -> Verdict:
-        """Store a verdict together with the events the VLM saw."""
+        """Store a verdict together with the events the VLM saw.
+
+        Callers pass evidence_event_ids oldest first, and verdicts return them
+        in that order.
+        """
 
     @abstractmethod
     def get(self, verdict_id: int) -> Verdict | None: ...
