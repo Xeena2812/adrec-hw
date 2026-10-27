@@ -8,7 +8,7 @@ Decisions marked *(Claude's call)* were not explicitly discussed and are open to
 - **Single camera.** No `camera_id` anywhere. A real system has many cameras and would also have to match conditions to cameras (production note).
 - Evidence types: `FRAME` (trigger frame), `CLIP` (trigger frame + clip), `HISTORY` (trigger frames of all events in `[t - window, t]`, oldest first, current event included, no clips).
 - Compiled spec = `evidence_type` + `history_window_seconds`. The window is required for `HISTORY` and forbidden for the other types (validated). No priority, no detector type, no episodes.
-- No separate compiler: `ConditionService.create` derives the spec from the text itself (keywords, sensible default).
+- No compiler: when a condition is created, `ConditionService.create` asks the VLM once (`classify_condition`) which evidence type it needs. The mock decides by keywords and defaults to `FRAME`.
 - One verdict per (event, condition); `verdict_evidence` records every event the VLM saw (needed for human review of `unsure`).
 - Every `yes` verdict creates an alert and logs it directly (no notifier class; dedup/cool-down parked). Alerts: `id, condition_id, created_at`.
 - `unsure` is just logged and filterable via the API; production would flag it for human review.
@@ -94,9 +94,10 @@ classDiagram
 
     class ConditionService {
         -conditions: ConditionRepository
+        -vlm: VLM
         +create(text: str) Condition
     }
-    note for ConditionService "create() picks the spec from keywords in the text\n(the mocked condition compiler), with a default\nfor anything unrecognised, then stores the condition."
+    note for ConditionService "create() asks vlm.classify_condition(text)\nfor the spec, then stores the condition."
 
     class ContextGatherer {
         -events: EventRepository
@@ -105,12 +106,14 @@ classDiagram
 
     class VLM {
         <<interface>>
+        +classify_condition(condition_text: str) ConditionSpec
         +evaluate(condition_text: str, context: Context) VLMResult
     }
     class MockVLM {
+        +classify_condition(condition_text: str) ConditionSpec
         +evaluate(condition_text: str, context: Context) VLMResult
     }
-    note for MockVLM "Stub - behaviour parked.\nDocstring: in production the real VLM receives\nall context selected by deterministic code from\nthe condition's spec and only returns a verdict."
+    note for MockVLM "classify_condition: keyword rules, default FRAME.\nevaluate: stub - behaviour parked.\nDocstring: in production the real VLM receives\nall context selected by deterministic code from\nthe condition's spec and only returns a verdict."
     VLM <|.. MockVLM
 
     class processing {
@@ -122,6 +125,7 @@ classDiagram
     note for processing "Plain functions, no classes.\nrun_queue_loop: get_nowait() from event_queue;\nif empty, sleep 200 ms; otherwise process_event().\nStarted as a background task in the FastAPI lifespan."
 
     ConditionService --> ConditionRepository
+    ConditionService --> VLM
     ContextGatherer --> EventRepository
     processing --> ContextGatherer
     processing --> VLM
@@ -275,11 +279,13 @@ sequenceDiagram
     participant U as User (/docs)
     participant API as FastAPI
     participant CS as ConditionService
+    participant V as VLM
     participant CR as ConditionRepository
 
     U->>API: POST /conditions {text}
     API->>CS: create(text)
-    CS->>CS: pick spec from keywords
+    CS->>V: classify_condition(text)
+    V-->>CS: ConditionSpec
     CS->>CR: create(text, spec)
     CR-->>CS: Condition
     CS-->>API: Condition
@@ -332,7 +338,7 @@ app/
   domain.py          # enums + Pydantic models above
   conditions.py      # ConditionService
   context.py         # ContextGatherer
-  vlm.py             # VLM, MockVLM (stub)
+  vlm.py             # VLM, MockVLM (classify_condition by keywords; evaluate is a stub)
   processing.py      # event_queue, process_event, run_queue_loop
   repositories/
     base.py          # the four repository interfaces
