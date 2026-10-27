@@ -10,7 +10,7 @@ Decisions marked *(Claude's call)* were not explicitly discussed and are open to
 - Compiled spec = `evidence_type` + `history_window_seconds`. The window is required for `HISTORY` and forbidden for the other types (validated). No priority, no detector type, no episodes.
 - No compiler: when a condition is created, `ConditionService.create` asks the VLM once (`classify_condition`) which evidence type it needs. The mock decides by keywords and defaults to `FRAME`.
 - One verdict per (event, condition); `verdict_evidence` records every event the VLM saw (needed for human review of `unsure`).
-- Every `yes` verdict creates an alert and logs it directly (no notifier class; dedup/cool-down parked). Alerts: `id, condition_id, created_at`.
+- Every `yes` verdict creates an alert and logs it directly (no notifier class; dedup/cool-down parked). Alerts: `id, condition_id, verdict_id, created_at`; the verdict carries the analytic info (triggering event, evidence events, reasoning).
 - `unsure` is just logged and filterable via the API; production would flag it for human review.
 - No media files; frame/clip paths are plain strings. Example events are hard-coded and posted to `POST /events`.
 - One Postgres container for all tables; repositories behind interfaces with in-memory fakes for unit tests. All repositories use the same method names: `create`, `get`, `get_all`. No deletes: to start from scratch, drop the database.
@@ -73,6 +73,7 @@ classDiagram
     class Alert {
         +id: int
         +condition_id: int
+        +verdict_id: int
         +created_at: datetime
     }
 
@@ -119,9 +120,27 @@ classDiagram
     class processing {
         <<module>>
         +process_event(event, conditions, gatherer, vlm, verdicts, alerts) List~Verdict~
-        +run_queue_loop(events: queue.Queue~Event~, handle, poll_interval=0.2) None
     }
-    note for processing "Plain functions, no classes.\nrun_queue_loop: get_nowait(); if empty, sleep 200 ms;\notherwise handle(event). A failing event is logged and skipped.\nmain.py creates the queue and starts the loop as a\nbackground task in the FastAPI lifespan; cancelling stops it."
+
+    class main {
+        <<module>>
+        +run_queue_loop(events: queue.Queue~Event~, handle, poll_interval=0.2) None
+        +sql_services(database_url: str) Services
+        +create_app(make_services=None) FastAPI
+    }
+    note for main "run_queue_loop: get_nowait(); if empty, sleep 200 ms;\notherwise handle(event). A failing event is logged and skipped.\nThe lifespan builds Services and starts the loop as a\nbackground task; cancelling it stops the loop."
+
+    class Services {
+        <<dataclass>>
+        +events: EventRepository
+        +conditions: ConditionRepository
+        +verdicts: VerdictRepository
+        +alerts: AlertRepository
+        +vlm: VLM
+        +event_queue: queue.Queue~Event~
+    }
+    main --> Services
+    main --> processing
 
     ConditionService --> ConditionRepository
     ConditionService --> VLM
@@ -146,7 +165,7 @@ classDiagram
     }
 ```
 
-`process_event`, per condition: `gather` → `vlm.evaluate` → `verdicts.create(...)` → if `YES`: `alerts.create(condition.id)` and `logger.info(...)` the alert.
+`process_event`, per condition: `gather` → `vlm.evaluate` → `verdicts.create(...)` → if `YES`: `alerts.create(condition.id, verdict.id)` and log the alert.
 
 ### ContextGatherer rules
 
@@ -185,7 +204,7 @@ classDiagram
     }
     class AlertRepository {
         <<interface>>
-        +create(condition_id: int) Alert
+        +create(condition_id: int, verdict_id: int) Alert
         +get(alert_id: int) Optional~Alert~
         +get_all() List~Alert~
     }
@@ -245,6 +264,7 @@ erDiagram
     ALERTS {
         serial id PK
         int condition_id FK
+        int verdict_id FK
         timestamptz created_at
     }
 
@@ -253,6 +273,7 @@ erDiagram
     VERDICTS ||--|{ VERDICT_EVIDENCE : "saw"
     EVENTS ||--o{ VERDICT_EVIDENCE : "used as evidence"
     CONDITIONS ||--o{ ALERTS : "raises"
+    VERDICTS ||--o| ALERTS : "explains"
 ```
 
 Indexes *(Claude's call)*: `events (timestamp)` for the history query; `verdicts (condition_id)` and `verdicts (verdict)` for the `/verdicts` filters.
@@ -299,7 +320,7 @@ sequenceDiagram
     participant API as FastAPI
     participant ER as EventRepository
     participant Q as queue.Queue
-    participant L as run_queue_loop / process_event
+    participant L as run_queue_loop (main) / process_event
     participant CR as ConditionRepository
     participant G as ContextGatherer
     participant V as VLM
@@ -324,7 +345,7 @@ sequenceDiagram
         V-->>L: VLMResult
         L->>VR: create(condition.id, event.id, result, [e.id for e in context.events])
         opt result.verdict == YES
-            L->>AR: create(condition.id)
+            L->>AR: create(condition.id, verdict.id)
             L->>L: log alert
         end
     end
@@ -338,13 +359,13 @@ app/
   conditions.py      # ConditionService
   context.py         # ContextGatherer
   vlm.py             # VLM, MockVLM (classify_condition by keywords; evaluate is a stub)
-  processing.py      # process_event, run_queue_loop
+  processing.py      # process_event
   repositories/
     base.py          # the four repository interfaces
     sql.py           # SQLAlchemy tables + Sql*Repository
     memory.py        # InMemory*Repository
-  api.py             # routes
-  main.py            # wiring: creates the queue, lifespan starts/cancels the queue loop
+  api.py             # Services + routes
+  main.py            # run_queue_loop, wiring; lifespan starts/cancels the loop
 demo/
   scenarios.py       # hard-coded conditions + events (shared with tests)
   run_demo.py        # posts scenarios to the API, prints verdicts/alerts

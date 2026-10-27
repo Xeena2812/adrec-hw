@@ -85,6 +85,13 @@ class Verdict(BaseModel):
 
 
 class Alert(BaseModel):
+    """An alert raised by a "yes" verdict.
+
+    The verdict links to everything behind the decision: the triggering event,
+    the evidence events and the VLM's reasoning.
+    """
+
     id: int
     condition_id: int
+    verdict_id: int
     created_at: datetime

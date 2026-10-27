@@ -187,10 +187,18 @@ def test_verdict_get_all_filters(repos):
 # --- alerts ---
 
 
+def yes_verdict(repos: Repos, condition_text: str, event_id: str):
+    """A condition plus a "yes" verdict for it, which an alert can point to."""
+    condition = repos.conditions.create(condition_text, FRAME_SPEC)
+    event = repos.events.create(make_event(event_id, 0))
+    return condition, repos.verdicts.create(condition.id, event.id, YES, [event.id])
+
+
 def test_alert_create_and_get(repos):
-    condition = repos.conditions.create("smoke", FRAME_SPEC)
-    alert = repos.alerts.create(condition.id)
+    condition, verdict = yes_verdict(repos, "smoke", "evt_0")
+    alert = repos.alerts.create(condition.id, verdict.id)
     assert alert.condition_id == condition.id
+    assert alert.verdict_id == verdict.id
     assert repos.alerts.get(alert.id) == alert
 
 
@@ -199,10 +207,10 @@ def test_alert_get_missing(repos):
 
 
 def test_alert_get_all_in_creation_order(repos):
-    c1 = repos.conditions.create("smoke", FRAME_SPEC)
-    c2 = repos.conditions.create("fire", FRAME_SPEC)
-    a = repos.alerts.create(c1.id)
-    b = repos.alerts.create(c2.id)
+    c1, v1 = yes_verdict(repos, "smoke", "evt_0")
+    c2, v2 = yes_verdict(repos, "fire", "evt_1")
+    a = repos.alerts.create(c1.id, v1.id)
+    b = repos.alerts.create(c2.id, v2.id)
     assert repos.alerts.get_all() == [a, b]
 
 

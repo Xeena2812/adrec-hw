@@ -73,6 +73,7 @@ class AlertRow(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     condition_id: Mapped[int] = mapped_column(ForeignKey("conditions.id"))
+    verdict_id: Mapped[int] = mapped_column(ForeignKey("verdicts.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -102,7 +103,7 @@ def _to_verdict(row: VerdictRow) -> Verdict:
 
 
 def _to_alert(row: AlertRow) -> Alert:
-    return Alert(id=row.id, condition_id=row.condition_id, created_at=row.created_at)
+    return Alert(id=row.id, condition_id=row.condition_id, verdict_id=row.verdict_id, created_at=row.created_at)
 
 
 class SqlEventRepository(EventRepository):
@@ -214,9 +215,9 @@ class SqlAlertRepository(AlertRepository):
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
 
-    def create(self, condition_id: int) -> Alert:
+    def create(self, condition_id: int, verdict_id: int) -> Alert:
         with self._sessions.begin() as session:
-            row = AlertRow(condition_id=condition_id)
+            row = AlertRow(condition_id=condition_id, verdict_id=verdict_id)
             session.add(row)
             session.flush()
             return _to_alert(row)

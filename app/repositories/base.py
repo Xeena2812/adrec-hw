@@ -74,7 +74,7 @@ class VerdictRepository(ABC):
 
 class AlertRepository(ABC):
     @abstractmethod
-    def create(self, condition_id: int) -> Alert:
+    def create(self, condition_id: int, verdict_id: int) -> Alert:
         """Store an alert; the repository assigns id and created_at."""
 
     @abstractmethod

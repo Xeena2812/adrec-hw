@@ -8,6 +8,10 @@ Running list of simplifications made for the prototype and what would replace th
 - **Frame and clip storage:** the prototype stores frames and clips on the local file system, with paths in the event DB. Production would use cloud blob/object storage (e.g. S3-compatible).
 - **Event storage:** the prototype uses Postgres. Production would use a proper time-series database for camera events, since nearly every query is "events for camera X in time window Y".
 
+## API
+
+- **Only the endpoints the pipeline and demo need:** creating and listing conditions, ingesting events, and listing verdicts and alerts. The prototype is an MVP, not a feature-complete API. A production API would also have read endpoints for single records and for events (`GET /events`, `GET /conditions/{id}`, `GET /verdicts/{id}`, `GET /alerts/{id}`), a review view of a verdict with its evidence events expanded (for human review of `unsure`), editing and deleting conditions, pagination, and a health endpoint.
+
 ## Mock VLM
 
 - **Note for the mock VLM class (docstring/comment):** in production, the real VLM is handed all the context it needs (event frame, clip, or several earlier events), selected by deterministic pipeline code based on the condition's compiled spec. The VLM only has to return a final verdict (yes / no / unsure). The mock reads a ground-truth note per event instead of looking at pixels, but keeps the same interface, so swapping in the real Qwen model changes only that one class.

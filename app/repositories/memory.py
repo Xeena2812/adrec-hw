@@ -103,8 +103,8 @@ class InMemoryAlertRepository(AlertRepository):
         self._alerts: dict[int, Alert] = {}
         self._ids = count(1)
 
-    def create(self, condition_id: int) -> Alert:
-        alert = Alert(id=next(self._ids), condition_id=condition_id, created_at=_now())
+    def create(self, condition_id: int, verdict_id: int) -> Alert:
+        alert = Alert(id=next(self._ids), condition_id=condition_id, verdict_id=verdict_id, created_at=_now())
         self._alerts[alert.id] = alert
         return alert
 

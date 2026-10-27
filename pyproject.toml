@@ -8,6 +8,7 @@ dependencies = [
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.14.1",
     "sqlalchemy>=2.1.6",
+    "uvicorn>=0.54.0",
 ]
 
 [tool.pytest.ini_options]
@@ -16,5 +17,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "pytest>=9.1.1",
 ]
