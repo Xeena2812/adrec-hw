@@ -1,0 +1,20 @@
+[project]
+name = "adrec-hw"
+version = "0.1.0"
+description = "Prototype analytics backend that checks free-text alert conditions against CCTV camera events"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.0",
+    "psycopg[binary]>=3.3.6",
+    "pydantic>=2.14.1",
+    "sqlalchemy>=2.1.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

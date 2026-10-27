@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Kept local until the final summary is written
+doc/ai-usage-log.md
