@@ -118,11 +118,10 @@ classDiagram
 
     class processing {
         <<module>>
-        +event_queue: queue.Queue~Event~
-        +process_event(event, conditions, gatherer, vlm, verdicts, alerts) None
-        +run_queue_loop(...) None
+        +process_event(event, conditions, gatherer, vlm, verdicts, alerts) List~Verdict~
+        +run_queue_loop(events: queue.Queue~Event~, handle, poll_interval=0.2) None
     }
-    note for processing "Plain functions, no classes.\nrun_queue_loop: get_nowait() from event_queue;\nif empty, sleep 200 ms; otherwise process_event().\nStarted as a background task in the FastAPI lifespan."
+    note for processing "Plain functions, no classes.\nrun_queue_loop: get_nowait(); if empty, sleep 200 ms;\notherwise handle(event). A failing event is logged and skipped.\nmain.py creates the queue and starts the loop as a\nbackground task in the FastAPI lifespan; cancelling stops it."
 
     ConditionService --> ConditionRepository
     ConditionService --> VLM
@@ -299,7 +298,7 @@ sequenceDiagram
     participant D as Demo script
     participant API as FastAPI
     participant ER as EventRepository
-    participant Q as event_queue
+    participant Q as queue.Queue
     participant L as run_queue_loop / process_event
     participant CR as ConditionRepository
     participant G as ContextGatherer
@@ -339,13 +338,13 @@ app/
   conditions.py      # ConditionService
   context.py         # ContextGatherer
   vlm.py             # VLM, MockVLM (classify_condition by keywords; evaluate is a stub)
-  processing.py      # event_queue, process_event, run_queue_loop
+  processing.py      # process_event, run_queue_loop
   repositories/
     base.py          # the four repository interfaces
     sql.py           # SQLAlchemy tables + Sql*Repository
     memory.py        # InMemory*Repository
   api.py             # routes
-  main.py            # wiring, lifespan starts/stops the queue loop
+  main.py            # wiring: creates the queue, lifespan starts/cancels the queue loop
 demo/
   scenarios.py       # hard-coded conditions + events (shared with tests)
   run_demo.py        # posts scenarios to the API, prints verdicts/alerts
