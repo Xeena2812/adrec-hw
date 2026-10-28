@@ -2,7 +2,7 @@
 
 Every test runs on the in-memory repositories and, when TEST_DATABASE_URL is
 set, on Postgres too. Only the camera (the HTTP calls) and the pixels (the
-ground-truth notes on the events) are simulated.
+scene notes on the events) are simulated.
 """
 
 import time
@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 
 from app.api import Services
 from app.demo import SCENARIOS, ScenarioName, ScenarioTimeout, run_scenario
-from app.domain import Context, VerdictValue, VLMResult
+from app.context import ContextGatherer
+from app.domain import Context, Event, VerdictValue, VLMResult
 from app.main import create_app
 from app.repositories.memory import (
     InMemoryAlertRepository,
@@ -58,7 +59,7 @@ def client(services):
         yield client
 
 
-def post_event(client: TestClient, event_id: str, seconds: int, note: dict[str, str]) -> None:
+def post_event(client: TestClient, event_id: str, seconds: int, note: dict) -> None:
     body = {
         "id": event_id,
         "timestamp": (T0 + timedelta(seconds=seconds)).isoformat(),
@@ -102,7 +103,7 @@ def test_multi_event_verdicts_see_a_growing_history(client):
         event_ids[:2],
         event_ids[:3],
     ]
-    assert [s["verdict"]["verdict"] for s in report["steps"]] == ["no", "unsure", "yes"]
+    assert [s["verdict"]["verdict"] for s in report["steps"]] == ["unsure", "unsure", "yes"]
     assert [s["alert"] is not None for s in report["steps"]] == [False, False, True]
 
 
@@ -116,13 +117,14 @@ def test_alert_links_to_its_verdict_and_events(client):
     assert step["verdict"]["event_id"] == step["event"]["id"]
 
 
-def test_all_cases_in_a_row_leave_five_conditions_and_four_alerts(client):
+def test_all_cases_in_a_row_leave_five_conditions_and_five_alerts(client):
     for case in ScenarioName:
         assert client.post(f"/demo/{case.value}").json()["passed"], case
 
-    assert len(client.get("/conditions").json()) == len(ScenarioName)
-    # single-frame 1, multi-event 1, insufficient 0, negative 0, dedup 2
-    assert len(client.get("/alerts").json()) == 4
+    # insufficient and package-left share one condition text
+    assert len(client.get("/conditions").json()) == len({s.condition_text for s in SCENARIOS.values()}) == 5
+    # single-frame 1, multi-event 1, insufficient 0, package-left 1, negative 0, dedup 2
+    assert len(client.get("/alerts").json()) == 5
 
 
 def test_a_case_can_be_repeated_without_interfering_with_its_earlier_run(client):
@@ -158,12 +160,36 @@ def test_demo_times_out_when_events_cannot_be_processed(services):
             run_scenario(services, SCENARIOS[ScenarioName.SINGLE_FRAME], timeout=0.3)
 
 
-def test_scenario_note_keywords_only_match_their_own_condition():
+def test_package_left_verdicts_follow_the_order_of_events(client):
+    report = client.post("/demo/package-left").json()
+
+    assert [s["verdict"]["verdict"] for s in report["steps"]] == ["no", "yes"]
+    assert [s["alert"] is not None for s in report["steps"]] == [False, True]
+    assert report["steps"][1]["verdict"]["evidence_event_ids"] == [s["event"]["id"] for s in report["steps"]]
+
+
+def test_scenario_events_never_say_yes_to_another_scenarios_condition():
+    vlm = MockVLM()
     for scenario in SCENARIOS.values():
-        keywords = {k for step in scenario.steps for k in step.note}
+        events = InMemoryEventRepository()
+        for number, step in enumerate(scenario.steps):
+            events.create(
+                Event(
+                    id=f"evt_{number}",
+                    timestamp=T0 + timedelta(seconds=step.offset_seconds),
+                    frame_path="f.jpg",
+                    clip_path="c.mjpeg",
+                    note=step.note,
+                )
+            )
+        gatherer = ContextGatherer(events)
         for other in SCENARIOS.values():
-            matches = any(k in other.condition_text.lower() for k in keywords)
-            assert matches == (other is scenario), (scenario.name, other.name)
+            if other.condition_text == scenario.condition_text:
+                continue
+            spec = vlm.classify_condition(other.condition_text)
+            for event in events.get_all():
+                result = vlm.evaluate(other.condition_text, gatherer.gather(event, spec))
+                assert result.verdict is not VerdictValue.YES, (scenario.name, other.name, event.id)
 
 
 # --- the plain API, the way a camera backend and a user would use it ---
@@ -175,26 +201,30 @@ def test_conditions_and_events_through_the_public_api(client):
     assert smoke["spec"]["evidence_type"] == "frame"
     assert loiter["spec"] == {"evidence_type": "history", "history_window_seconds": 120}
 
-    post_event(client, "evt_0", 0, {"smoke": "no", "loiter": "unsure"})
-    post_event(client, "evt_1", 10, {"smoke": "yes", "loiter": "yes"})
-    verdicts = wait_for_verdicts(client, 4)
+    post_event(client, "evt_0", 0, {"people": ["p1"], "observations": {"smoke": "no"}})
+    post_event(client, "evt_1", 10, {"people": ["p1"], "observations": {"smoke": "yes"}})
+    post_event(client, "evt_2", 20, {"people": ["p1"]})
+    verdicts = wait_for_verdicts(client, 6)
 
     by_event = {(v["event_id"], v["condition_id"]): v for v in verdicts}
     assert {k: v["verdict"] for k, v in by_event.items()} == {
         ("evt_0", smoke["id"]): "no",
         ("evt_0", loiter["id"]): "unsure",
         ("evt_1", smoke["id"]): "yes",
-        ("evt_1", loiter["id"]): "yes",
+        ("evt_1", loiter["id"]): "unsure",
+        ("evt_2", smoke["id"]): "no",
+        ("evt_2", loiter["id"]): "yes",
     }
     assert by_event[("evt_1", smoke["id"])]["evidence_event_ids"] == ["evt_1"]
-    assert by_event[("evt_1", loiter["id"])]["evidence_event_ids"] == ["evt_0", "evt_1"]
+    assert by_event[("evt_2", loiter["id"])]["evidence_event_ids"] == ["evt_0", "evt_1", "evt_2"]
 
     alerts = client.get("/alerts").json()
     assert {a["verdict_id"] for a in alerts} == {
         by_event[("evt_1", smoke["id"])]["id"],
-        by_event[("evt_1", loiter["id"])]["id"],
+        by_event[("evt_2", loiter["id"])]["id"],
     }
-    assert [v["condition_id"] for v in client.get("/verdicts", params={"verdict": "unsure"}).json()] == [loiter["id"]]
+    unsure = client.get("/verdicts", params={"verdict": "unsure"}).json()
+    assert [v["condition_id"] for v in unsure] == [loiter["id"], loiter["id"]]
 
 
 def test_event_without_a_note_is_a_no_for_every_condition(client):

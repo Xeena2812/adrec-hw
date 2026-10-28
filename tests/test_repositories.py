@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.domain import ConditionSpec, Event, EvidenceType, VerdictValue, VLMResult
+from app.domain import ConditionSpec, Event, EvidenceType, SceneNote, VerdictValue, VLMResult
 from app.repositories.base import (
     AlertRepository,
     ConditionRepository,
@@ -92,6 +92,18 @@ def test_event_create_and_get(repos):
     event = make_event("evt_1", 0)
     repos.events.create(event)
     assert repos.events.get("evt_1") == event
+
+
+def test_event_scene_note_round_trips(repos):
+    note = SceneNote(people=["p1", "p2"], objects=["package"], observations={"smoke": VerdictValue.UNSURE})
+    repos.events.create(make_event("evt_1", 0).model_copy(update={"note": note}))
+    assert repos.events.get("evt_1").note == note
+    assert repos.events.get_all()[0].note == note
+
+
+def test_event_without_a_note_has_an_empty_scene(repos):
+    repos.events.create(make_event("evt_1", 0))
+    assert repos.events.get("evt_1").note == SceneNote()
 
 
 def test_event_get_missing(repos):

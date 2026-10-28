@@ -11,7 +11,7 @@ from sqlalchemy import JSON, DateTime, Engine, ForeignKey, Text, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
-from app.domain import Alert, Condition, ConditionSpec, Event, Verdict, VerdictValue, VLMResult
+from app.domain import Alert, Condition, ConditionSpec, Event, SceneNote, Verdict, VerdictValue, VLMResult
 from app.repositories.base import (
     AlertRepository,
     ConditionRepository,
@@ -33,7 +33,7 @@ class EventRow(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     frame_path: Mapped[str] = mapped_column(Text)
     clip_path: Mapped[str] = mapped_column(Text)
-    note: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    note: Mapped[dict] = mapped_column(JSON, default=dict)  # a SceneNote as JSON
 
 
 class ConditionRow(Base):
@@ -84,7 +84,11 @@ def create_tables(engine: Engine) -> None:
 
 def _to_event(row: EventRow) -> Event:
     return Event(
-        id=row.id, timestamp=row.timestamp, frame_path=row.frame_path, clip_path=row.clip_path, note=row.note
+        id=row.id,
+        timestamp=row.timestamp,
+        frame_path=row.frame_path,
+        clip_path=row.clip_path,
+        note=SceneNote.model_validate(row.note),
     )
 
 

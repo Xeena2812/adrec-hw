@@ -1,7 +1,7 @@
 """Demo scenarios: scripted event sequences with their expected outcome.
 
-Each scenario posts one condition and a few events whose ground-truth notes
-script what MockVLM concludes. `run_scenario` pushes them through the real
+Each scenario posts one condition and a few events whose scene notes describe
+what is visible; MockVLM derives its verdicts from them. `run_scenario` pushes them through the real
 pipeline (event queue, processing loop, repositories), waits for the verdicts
 and compares them with the expected outcome. The same scenarios back the
 `/demo` endpoints and the end-to-end tests.
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from app.api import Services, get_services
 from app.conditions import ConditionService
-from app.domain import Alert, Condition, Event, Verdict, VerdictValue
+from app.domain import Alert, Condition, Event, SceneNote, Verdict, VerdictValue
 
 YES, NO, UNSURE = VerdictValue.YES, VerdictValue.NO, VerdictValue.UNSURE
 
@@ -27,16 +27,17 @@ class ScenarioName(StrEnum):
     SINGLE_FRAME = "single-frame"
     MULTI_EVENT = "multi-event"
     INSUFFICIENT = "insufficient"
+    PACKAGE_LEFT = "package-left"
     NEGATIVE = "negative"
     DEDUP = "dedup"
 
 
 @dataclass(frozen=True)
 class Step:
-    """One camera event: when it fires, what the mock VLM is scripted to see, and what should result."""
+    """One camera event: when it fires, what is visible in it, and what should result."""
 
     offset_seconds: int
-    note: dict[str, VerdictValue]
+    note: SceneNote
     expected_verdict: VerdictValue
     expected_alert: bool
 
@@ -49,8 +50,12 @@ class Scenario:
     steps: tuple[Step, ...]
 
 
-# Each note keyword appears only in its own scenario's condition text, so a
-# scenario's events never produce a "yes" for another scenario's condition.
+PACKAGE_CONDITION = "Alert me if someone leaves a package at the door and walks away"
+
+# Every condition is checked against every event, so the scenarios must not
+# produce a "yes" for each other's conditions: observation keywords are
+# unique to one scenario, and no person is visible in three consecutive
+# events of more than one scenario (the loitering threshold).
 SCENARIOS: dict[ScenarioName, Scenario] = {
     s.name: s
     for s in (
@@ -58,29 +63,44 @@ SCENARIOS: dict[ScenarioName, Scenario] = {
             ScenarioName.SINGLE_FRAME,
             "Decidable from the trigger frame of a single event.",
             "Alert me if you see smoke",
-            (Step(0, {"smoke": YES}, YES, True),),
+            (Step(0, SceneNote(observations={"smoke": YES}), YES, True),),
         ),
         Scenario(
             ScenarioName.MULTI_EVENT,
-            "Needs the history: each verdict sees the earlier events, and only the third event settles it.",
+            "The same person shows up in three events in a row. The verdict changes because the history grows: "
+            "one or two sightings are not enough to tell, the third settles it.",
             "Alert me if someone loiters in front of the embassy",
             (
-                Step(0, {"loiter": NO}, NO, False),
-                Step(10, {"loiter": UNSURE}, UNSURE, False),
-                Step(20, {"loiter": YES}, YES, True),
+                Step(0, SceneNote(people=["p1"]), UNSURE, False),
+                Step(10, SceneNote(people=["p1"]), UNSURE, False),
+                Step(20, SceneNote(people=["p1"]), YES, True),
             ),
         ),
         Scenario(
             ScenarioName.INSUFFICIENT,
-            "The evidence is not enough for a confident decision: the verdict is unsure and nothing alerts.",
-            "Alert me if someone leaves a package at the door and walks away",
-            (Step(0, {"package": UNSURE}, UNSURE, False),),
+            "A package is visible, but nobody is in any frame of the history: the evidence doesn't show "
+            "who left it, so the verdict is unsure and nothing alerts.",
+            PACKAGE_CONDITION,
+            (
+                Step(0, SceneNote(objects=["package"]), UNSURE, False),
+                Step(10, SceneNote(objects=["package"]), UNSURE, False),
+            ),
+        ),
+        Scenario(
+            ScenarioName.PACKAGE_LEFT,
+            "Temporal order matters: with the person still next to the package nothing is wrong, "
+            "and once a later event shows the package alone, the history shows the person walked away.",
+            PACKAGE_CONDITION,
+            (
+                Step(0, SceneNote(people=["p2"], objects=["package"]), NO, False),
+                Step(10, SceneNote(objects=["package"]), YES, True),
+            ),
         ),
         Scenario(
             ScenarioName.NEGATIVE,
             "The event fires, but the condition is not met.",
             "Alert me if someone is fleeing",
-            (Step(0, {"fleeing": NO}, NO, False),),
+            (Step(0, SceneNote(observations={"fleeing": NO}), NO, False),),
         ),
         Scenario(
             ScenarioName.DEDUP,
@@ -88,9 +108,9 @@ SCENARIOS: dict[ScenarioName, Scenario] = {
             "and a new alert follows once the situation has been quiet for more than 10 seconds.",
             "Alert me if you see a fire",
             (
-                Step(0, {"fire": YES}, YES, True),
-                Step(10, {"fire": YES}, YES, False),
-                Step(30, {"fire": YES}, YES, True),
+                Step(0, SceneNote(observations={"fire": YES}), YES, True),
+                Step(10, SceneNote(observations={"fire": YES}), YES, False),
+                Step(30, SceneNote(observations={"fire": YES}), YES, True),
             ),
         ),
     )

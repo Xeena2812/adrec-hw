@@ -25,18 +25,26 @@ class VerdictValue(StrEnum):
     UNSURE = "unsure"
 
 
-class Event(BaseModel):
-    """A camera event. Paths are plain strings; the prototype has no media files.
+class SceneNote(BaseModel):
+    """What is visible in an event's trigger frame and clip.
 
-    `note` is simulation-only ground truth: what the real VLM would conclude
-    from the pixels, per condition keyword. Only MockVLM reads it.
+    Simulation-only ground truth: what the real VLM would perceive from the
+    pixels. It describes the scene, never a verdict. Only MockVLM reads it.
     """
+
+    people: list[str] = Field(default_factory=list)  # person ids in the trigger frame (stand-in for re-identification)
+    objects: list[str] = Field(default_factory=list)  # objects in the trigger frame
+    observations: dict[str, VerdictValue] = Field(default_factory=dict)  # direct frame/clip judgements by keyword
+
+
+class Event(BaseModel):
+    """A camera event. Paths are plain strings; the prototype has no media files."""
 
     id: str
     timestamp: AwareDatetime  # naive timestamps are rejected
     frame_path: str
     clip_path: str
-    note: dict[str, VerdictValue] = Field(default_factory=dict)
+    note: SceneNote = Field(default_factory=SceneNote)
 
 
 class ConditionSpec(BaseModel):
