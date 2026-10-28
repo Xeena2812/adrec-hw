@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import queue
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -163,3 +164,41 @@ def test_event_is_processed_into_verdicts_and_alerts(client):
     yes_verdict = next(v for v in verdicts if v["verdict"] == "yes")
     alerts = client.get("/alerts").json()
     assert [(a["condition_id"], a["verdict_id"]) for a in alerts] == [(smoke["id"], yes_verdict["id"])]
+
+
+class BlockingVLM(ScriptedVLM):
+    """Blocks inside evaluate until `release` is set, like a slow model call."""
+
+    def __init__(self) -> None:
+        super().__init__({"alert me if you see smoke": VerdictValue.YES})
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def evaluate(self, condition_text: str, context: Context) -> VLMResult:
+        self.started.set()
+        self.release.wait(timeout=5)
+        return super().evaluate(condition_text, context)
+
+
+def test_api_stays_responsive_while_the_vlm_is_evaluating():
+    vlm = BlockingVLM()
+    services = Services(
+        events=InMemoryEventRepository(),
+        conditions=InMemoryConditionRepository(),
+        verdicts=InMemoryVerdictRepository(),
+        alerts=InMemoryAlertRepository(),
+        vlm=vlm,
+    )
+    with TestClient(create_app(lambda: services)) as client:
+        try:
+            client.post("/conditions", json={"text": "alert me if you see smoke"})
+            client.post("/events", json=event_json("evt_0", 0))
+            assert vlm.started.wait(timeout=2), "the VLM was never called"
+
+            started = time.monotonic()
+            assert client.get("/conditions").status_code == 200
+            assert time.monotonic() - started < 0.5
+            assert client.get("/verdicts").json() == []  # still evaluating
+        finally:
+            vlm.release.set()
+        assert len(wait_for_verdicts(client, 1)) == 1

@@ -27,7 +27,7 @@ class Services:
     verdicts: VerdictRepository
     alerts: AlertRepository
     vlm: VLM
-    # Thread-safe: sync routes run in FastAPI's thread pool, the loop on the event loop.
+    # Thread-safe: sync routes run in FastAPI's thread pool, event processing in a worker thread.
     event_queue: queue.Queue[Event] = field(default_factory=queue.Queue)
 
 

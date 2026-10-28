@@ -44,8 +44,11 @@ async def run_queue_loop(
 ) -> None:
     """Hand queued events to `handle` in arrival order until the task is cancelled.
 
-    When the queue is empty the loop sleeps for `poll_interval`. A failing
-    event is logged and skipped, so one bad event doesn't stop processing.
+    `handle` is synchronous and may be slow (a VLM call), so it runs in a
+    worker thread to keep the event loop, and with it the API, responsive. One
+    event at a time, so arrival order is kept. When the queue is empty the
+    loop sleeps for `poll_interval`. A failing event is logged and skipped, so
+    one bad event doesn't stop processing.
     """
     while True:
         try:
@@ -54,13 +57,11 @@ async def run_queue_loop(
             await asyncio.sleep(poll_interval)
             continue
         try:
-            handle(event)
+            await asyncio.to_thread(handle, event)
         except Exception:
             logger.exception("processing event %s failed", event.id)
         finally:
             events.task_done()  # lets callers tell when an event has been fully handled
-        # Let the API serve requests between events when the queue is busy.
-        await asyncio.sleep(0)
 
 
 def sql_services(database_url: str) -> Services:
