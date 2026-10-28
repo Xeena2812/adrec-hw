@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How I used AI on adrec-hw</title>
+<meta name="description" content="How Claude Desktop and Claude Code were used to design, build and review the adrec-hw take-home, and the thinking behind it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232a78d6'/%3E%3Cpath d='M6 22V14h3v8zM12 22V8h3v14zM18 22V12h3v10zM24 22V17h3v5z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fcfcfb; --ink: #16191c; --ink-2: #4a5157; --muted: #6b7178;
+    --rule: #e3e6e8; --axis: #c5cacd; --wash: rgba(22,25,28,.05);
+    --opus: #2a78d6; --sonnet: #eb6834; --bar: #8a9298;
+    --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, "Iowan Old Style", Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1a1a19; --ink: #ecefef; --ink-2: #b4bbbf; --muted: #8a9298;
+    --rule: #2c2f31; --axis: #3b3f42; --wash: rgba(236,239,239,.07);
+    --opus: #3987e5; --sonnet: #d95926; --bar: #8a9298;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--serif); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 56px 24px 96px; }
+  :focus-visible { outline: 2px solid var(--opus); outline-offset: 2px; border-radius: 2px; }
+
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  h1 { font: 650 clamp(32px, 5vw, 46px)/1.08 var(--serif); letter-spacing: -.022em; margin: 0 0 20px; text-wrap: balance; }
+  h2 { font: 650 24px/1.2 var(--serif); letter-spacing: -.012em; margin: 0 0 8px; }
+  h3 { font: 650 19px/1.3 var(--serif); margin: 0 0 6px; }
+  p { margin: 0 0 12px; }
+  .lede { font-size: 19px; line-height: 1.55; max-width: 62ch; text-wrap: pretty; }
+  .intro { color: var(--ink-2); max-width: 62ch; text-wrap: pretty; }
+  section { margin-top: 88px; }
+  header + section { margin-top: 48px; }
+  .small { font: 13px/1.5 var(--sans); color: var(--muted); }
+  code { font: .88em var(--mono); background: var(--wash); padding: 1px 5px; border-radius: 3px; }
+
+  /* light / dark switch */
+  .theme { display: inline-flex; flex: none; border: 1px solid var(--axis); border-radius: 8px; padding: 2px; font: 13px/1 var(--sans); }
+  .theme button { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 6px; color: var(--ink-2); transition: background .15s, color .15s; }
+  .theme button:hover { background: var(--wash); }
+  .theme button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .theme button:focus-visible { outline: 2px solid var(--opus); outline-offset: 1px; }
+
+  /* timeline */
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font: 13px/1.4 var(--sans); color: var(--ink-2); margin: 14px 0 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+  .tick { width: 2px; height: 14px; background: var(--ink); border-radius: 1px; display: inline-block; }
+  .hatch { width: 16px; height: 12px; display: inline-block; background: repeating-linear-gradient(135deg, var(--bar) 0 1.5px, transparent 1.5px 5px); border: 1px solid var(--axis); }
+  .chart-scroll { overflow-x: auto; margin: 0 -24px; padding: 0 24px; }
+  svg { display: block; width: 100%; min-width: 860px; height: auto; overflow: visible; }
+  svg text { font-family: var(--sans); fill: var(--ink-2); }
+  svg .lane-title { fill: var(--ink); font-weight: 600; font-size: 13px; }
+  svg .day { fill: var(--ink); font-weight: 600; font-size: 13px; }
+  svg .halo { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+  .hit { fill: transparent; }
+  .hit:hover { fill: var(--wash); }
+  .bar { transform-box: fill-box; transform-origin: 50% 100%; animation: rise .7s cubic-bezier(.2,.7,.2,1) both; animation-delay: var(--d, 0ms); }
+  .no-motion .bar { animation: none; }
+  @keyframes rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .bar { animation: none; } html { scroll-behavior: auto; } }
+
+  /* master / detail, shared by the design conversation and the code stages */
+  .md { display: grid; grid-template-columns: minmax(280px, 5fr) 7fr; gap: 48px; margin-top: 28px; align-items: start; }
+  .topics { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+  .topics li { border-bottom: 1px solid var(--rule); }
+  .topics button { all: unset; box-sizing: border-box; width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 10px 12px 10px 14px; cursor: pointer; font: 500 15px/1.4 var(--sans); border-left: 3px solid transparent; transition: background .15s; }
+  .topics button:hover { background: var(--wash); }
+  .topics button[aria-current="true"] { background: var(--wash); border-left-color: var(--ink); font-weight: 650; }
+  .topics button:focus-visible { outline: 2px solid var(--opus); outline-offset: -2px; }
+  .outcome { font: 12.5px/1.4 var(--sans); color: var(--muted); white-space: nowrap; font-weight: 400; }
+  .outcome i { font-style: normal; color: var(--ink); margin-right: 5px; }
+  .detail { position: sticky; top: 24px; min-height: 240px; }
+  .detail.swap { animation: fade .18s ease-out; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .detail dl { margin: 18px 0 0; display: grid; gap: 16px; }
+  .detail dt { font: 600 13px/1.3 var(--sans); color: var(--muted); margin-bottom: 2px; }
+  .detail dd { margin: 0; max-width: 58ch; text-wrap: pretty; }
+  .detail .none { color: var(--muted); font-style: italic; }
+  .verdict { font: 600 14px/1.4 var(--sans); }
+  .verdict i { font-style: normal; margin-right: 6px; }
+
+  #tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--bg); border-radius: 6px; padding: 8px 10px;
+    font: 12.5px/1.45 var(--sans); max-width: 300px; opacity: 0; transition: opacity .08s; }
+  #tip small { display: block; opacity: .78; font-size: 12px; margin-top: 2px; }
+
+  @media (max-width: 820px) {
+    .wrap { padding-top: 32px; }
+    .md { grid-template-columns: 1fr; gap: 28px; }
+    .detail { position: static; min-height: 0; }
+    section { margin-top: 64px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="top">
+      <h1>How I used AI on this project</h1>
+      <div class="theme" role="group" aria-label="Color theme">
+        <button type="button" data-theme-set="light" aria-pressed="true">Light</button>
+        <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+    <p class="lede">I worked the design out first in Claude Desktop, mostly by talking it through, with Claude asking questions instead of handing me answers. Claude Code then wrote the implementation in stages, and for each one I kept what worked and changed what I disagreed with.</p>
+  </header>
+
+  <section aria-labelledby="h-design">
+    <h2 id="h-design">Design phase in Claude Desktop</h2>
+    <p class="intro" id="howUsed"></p>
+    <div class="md">
+      <ul class="topics" id="topics" aria-label="Design topics"></ul>
+      <div class="detail" id="detail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-build">
+    <h2 id="h-build">Building with Claude Code</h2>
+    <p class="intro">Claude wrote the code one stage at a time. Pick a stage to see what Claude produced and what I changed or decided.</p>
+    <div class="md">
+      <ul class="topics" id="stages" aria-label="Implementation stages"></ul>
+      <div class="detail" id="stageDetail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-timeline">
+    <h2 id="h-timeline">When the work happened</h2>
+    <p class="intro">Each lane is one Claude Code session. Bars show how much Claude did in each 5-minute slot. The gaps are the time between: reading, deciding and working in the editor.</p>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--opus)"></i>Opus 5.5</span>
+      <span><i class="sw" style="background:var(--sonnet)"></i>Sonnet 5.5</span>
+      <span><i class="tick"></i>one of my prompts</span>
+      <span><i class="hatch"></i>no timestamps recorded</span>
+    </div>
+    <div class="chart-scroll"><div id="timeline"></div></div>
+  </section>
+
+  <p class="small" style="margin-top:64px;max-width:70ch">Built from my Claude Code session history and my notes from the design conversation. Times are CET.</p>
+</div>
+<div id="tip" role="presentation"></div>
+
+<script>
+const DATA = {"lanes": [{"label": "Planning, stages 1–6, Docker", "model": "opus", "start": 1793101377747, "end": 1793117588229, "day": 0, "prompts": [1793101377747, 1793108731797, 1793108947006, 1793109394047, 1793109493281, 1793110006107, 1793110265806, 1793110322915, 1793110403040, 1793110457315, 1793110614529, 1793111805364, 1793112194128, 1793113039688, 1793113354099, 1793113764263, 1793114475330, 1793114921206, 1793115053782, 1793115425757, 1793115572415, 1793116002757, 1793116339077, 1793116793551, 1793117119558, 1793117469388], "buckets": [[1793101200000, 4], [1793110500000, 3], [1793111700000, 2], [1793112000000, 11], [1793112900000, 2], [1793113200000, 13], [1793113800000, 11], [1793114700000, 2], [1793115000000, 10], [1793115300000, 6], [1793115600000, 4], [1793116200000, 3], [1793116800000, 10], [1793117400000, 12]], "subs": []}, {"label": "Docker check, demo, tests", "model": "sonnet", "start": 1793191575777, "end": 1793192631256, "day": 1, "prompts": [1793191575777, 1793191898409, 1793192613623], "buckets": [[1793191500000, 6], [1793191800000, 7], [1793192100000, 13], [1793192400000, 1]], "subs": []}, {"label": "Review against the brief", "model": "opus", "start": 1793192719956, "end": 1793193011103, "day": 1, "prompts": [1793192719956], "buckets": [[1793192700000, 12]], "subs": []}, {"label": "Review follow-ups and docs", "model": "opus", "start": 1793193142632, "end": 1793205024680, "day": 1, "prompts": [1793193142632, 1793194038875, 1793194174158, 1793195321478, 1793195455229, 1793195830589, 1793197954911, 1793198414200, 1793203651929, 1793204240069, 1793204796175, 1793205004533], "buckets": [[1793193000000, 13], [1793193300000, 1], [1793194200000, 1], [1793194800000, 1], [1793195100000, 1], [1793195400000, 1], [1793195700000, 3], [1793196000000, 1], [1793196300000, 3], [1793197800000, 13], [1793204100000, 6], [1793204700000, 6], [1793205000000, 1]], "subs": [{"desc": "Audit docs against code", "model": "opus", "start": 1793205021475, "end": 1793205157510}, {"desc": "Implement mock VLM and async fix", "model": "sonnet", "start": 1793194213927, "end": 1793194821507}, {"desc": "Gap fix, docs, README", "model": "sonnet", "start": 1793195997094, "end": 1793196301370}]}], "decisions": [{"topic": "First approach", "mine": "VLM describes each frame, the description is semantically matched to user conditions, and an LLM decides per event what evidence a condition needs.", "claude": "Asked: what if the generic description omits the relevant detail (e.g. faint smoke)? Does the evidence need change between events? Pointed out that I'd merged \"more frames\" with \"multiple events\".", "outcome": "Dropped caption-then-match as the decision mechanism.", "chip": "Dropped", "glyph": "✕"}, {"topic": "Compiling conditions at creation time", "mine": "Ask an LLM, when the condition is created, how much time/context it needs; translate that into a DB query. Also considered a user dropdown.", "claude": "Guiding question: \"is there a moment you could make this decision once?\" Suggested the hybrid (LLM suggests, user overrides) as a combination of my two options.", "outcome": "Adopted. Exact context options still open.", "chip": "Adopted", "glyph": "✓"}, {"topic": "Same-person problem (loitering, package)", "mine": "Rely on VLM descriptions; condition-specific logic is too complex for this scope.", "claude": "Agreed it's a fair scoping call; suggested listing it as a known limitation, with re-identification as the production fix.", "outcome": "Documented as a known limitation.", "chip": "Known limitation", "glyph": "⚑"}, {"topic": "Handling \"unsure\"", "mine": "First: log it and flag for human review. Then: a retry/wait budget. Finally: stateless re-evaluation, where each new event re-evaluates over history and no pending state is stored.", "claude": "Asked whether waiting vs. escalating differs for loitering vs. smoke, and whether the waiting budget could be fixed at creation time.", "outcome": "My stateless re-evaluation design adopted. Claude flagged the follow-on problems (silent unsure, repeated yeses).", "chip": "Adopted", "glyph": "✓"}, {"topic": "Episodes", "mine": "Answered that a 2-minute gap between events means they're probably unrelated.", "claude": "Prompted with the 10 s re-fire detail from the brief, and pointed out this defines episodes.", "outcome": "Adopted; exact threshold left as a parameter.", "chip": "Adopted", "glyph": "✓"}, {"topic": "Verdict table", "mine": "Initially one row per event; revised myself to one row per (event, condition) with verdict and reasoning.", "claude": "Asked how separate verdicts would fit in one row, and pointed out the missing event link.", "outcome": "Adopted. Multi-event linking still open.", "chip": "Adopted", "glyph": "✓"}, {"topic": "Mock VLM", "mine": "Hard-coded responses, or the real model via the Hugging Face API. Proposed JSON metadata per event.", "claude": "Suggested putting a ground-truth note on the event (not the condition), read only by the mock behind the real interface. Warned that if the pipeline read JSON directly it would bypass the VLM and solve an easier problem.", "outcome": "Adopted: the mock reads a sidecar note; the pipeline passes real frame and clip paths.", "chip": "Adopted", "glyph": "✓"}, {"topic": "Agentic retrieval loop", "mine": "VLM with tools to fetch related events and clips in a loop until it decides.", "claude": "Argued against: moves the decision flow into the model, makes tests about scripted trajectories, multiplies inference cost.", "outcome": "Rejected for the prototype; noted as a production alternative.", "chip": "Rejected for prototype", "glyph": "✕"}, {"topic": "Event queue", "mine": "In-process list/stack for the MVP; RabbitMQ in production.", "claude": "Corrected \"stack\" to FIFO, since temporal conditions need ordering.", "outcome": "FIFO queue adopted.", "chip": "Adopted", "glyph": "✓"}, {"topic": "Components", "mine": "Repositories, event processor, notifier interface, condition compiler, decision maker. Later removed repositories from the diagram and wanted to drop the decision maker as a \"duplicate\".", "claude": "Asked which component owns each core idea. Objected that removing the decision maker would leave context gathering, the central problem, without an owner.", "outcome": "Renamed to context gatherer and kept. Alert/dedup logic kept inside the event processor (my call, despite Claude's testability concern).", "chip": "Renamed, kept", "glyph": "✓"}, {"topic": "Architecture diagram", "mine": "Specified all boxes and arrows: camera backend group, queue on the backend's border, Decisions DB, Conditions DB, UI, alert service.", "claude": "Drew it in Excalidraw. Added a \"read history\" arrow and asked where earlier events come from.", "outcome": "Final diagram.", "chip": "Final diagram", "glyph": "✓"}, {"topic": "Time management", "mine": "Asked whether I was over-designing.", "claude": "Said yes: about 3 of the 4–6 hours were spent on design; recommended one sequence diagram, then coding.", "outcome": "Moved to writing DESIGN.md as the implementation brief.", "chip": "Moved on to coding", "glyph": "→"}], "howUsed": "I explicitly asked Claude not to solve the task, but to act as a thinking partner. It restated the problem, asked guiding questions about my ideas, and steered me away from weak solutions without handing me answers.", "stages": [{"stage": "Planning", "generated": "Questions on the open points of `Design.md`; `doc/class-diagrams.md` (two revisions)", "changed": "Settled all open points except the mock VLM, dedup and UI; simplified the class design (single camera, no compiler/notifier/worker/processor classes, no deletes, uniform repository naming)"}, {"stage": "Stage 1: project + domain models", "generated": "`pyproject.toml`, `.gitignore`, `.python-version`, `app/domain.py`, `tests/test_domain.py`", "changed": "Reviewed; left a TODO to move the `EvidenceType` line comments into the docstring (Claude did the move)"}, {"stage": "Stage 2: repository interfaces + in-memory repositories", "generated": "`app/repositories/base.py`, `app/repositories/memory.py`, `tests/test_repositories.py`", "changed": "Approved; asked to make `Event.timestamp` an `AwareDatetime` (Claude's suggestion)"}, {"stage": "Stage 3: Postgres repositories", "generated": "`app/repositories/sql.py`, `tests/conftest.py`, SQL backend in `tests/test_repositories.py`", "changed": "Removed the `position` column Claude added to `verdict_evidence`; evidence is ordered by event timestamp instead"}, {"stage": "Stage 4: condition service, context gatherer, VLM interface", "generated": "`app/conditions.py`, `app/context.py`, `app/vlm.py`, `tests/test_conditions.py`, `tests/test_context.py`, `tests/test_vlm.py`", "changed": "Corrected Claude's \"compiler\" reading: the spec comes from a (mock) VLM call at creation, so the keyword rules moved into `MockVLM.classify_condition`; default changed from CLIP to FRAME"}, {"stage": "Stage 5: event processing", "generated": "`app/processing.py` (`process_event`, `run_queue_loop`), `tests/test_processing.py`; production note on two-stage evaluation (written from my idea)", "changed": "Proposed relevance screening (VLM picks relevant conditions per event from the frame) to cut inference cost; decided to keep checking every condition in the prototype and record the idea and its trade-off in `production-notes.md`; asked to move the queue loop into `main.py`"}, {"stage": "Stage 6: API + wiring", "generated": "`app/api.py` (`Services`, routes), `app/main.py` (`run_queue_loop` moved here, `create_app`, `sql_services`), `tests/test_main.py`; uvicorn, httpx2; `verdict_id` on alerts", "changed": "Kept the API minimal (MVP), extra read endpoints only noted for production; agreed to link alerts to their verdict (Claude pointed out the brief requires the link)"}, {"stage": "Docker setup", "generated": "`Dockerfile`, `.dockerignore`, `docker-compose.yml`", "changed": ""}]};
+const CET = 3600e3, NS = "http://www.w3.org/2000/svg";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const modelName = m => ({ opus: "Opus 5.5", sonnet: "Sonnet 5.5" })[m];
+const pad = n => String(n).padStart(2, "0");
+const hhmm = t => { const d = new Date(t + CET); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); };
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const rich = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const wrap = (s, n) => { const out = []; let cur = ""; s.split(" ").forEach(w => { if ((cur + " " + w).trim().length > n) { out.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }); if (cur) out.push(cur); return out; };
+
+// tooltip
+const tip = document.getElementById("tip");
+function bindTip(node, content) {
+  node.addEventListener("mousemove", ev => {
+    tip.innerHTML = content;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 316) + "px"; tip.style.top = (ev.clientY + 16) + "px"; tip.style.opacity = 1;
+  });
+  node.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+}
+
+// ---------- master / detail ----------
+function masterDetail(listId, detailId, items, { row, detail }) {
+  const ul = document.getElementById(listId), det = document.getElementById(detailId);
+  const show = (i, swap = true) => {
+    ul.querySelectorAll("button").forEach((b, j) => b.setAttribute("aria-current", j === i ? "true" : "false"));
+    det.innerHTML = detail(items[i]);
+    if (swap) { det.classList.remove("swap"); void det.offsetWidth; det.classList.add("swap"); }
+  };
+  ul.innerHTML = items.map((d, i) => `<li><button type="button" data-i="${i}">${row(d)}</button></li>`).join("");
+  ul.addEventListener("click", e => { const b = e.target.closest("button"); if (b) show(+b.dataset.i); });
+  ul.addEventListener("keydown", e => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const bs = [...ul.querySelectorAll("button")], i = bs.indexOf(document.activeElement); if (i < 0) return;
+    e.preventDefault(); const n = Math.max(0, Math.min(bs.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))); bs[n].focus(); show(n);
+  });
+  show(0, false);
+}
+
+function panels() {
+  document.getElementById("howUsed").textContent = DATA.howUsed;
+  masterDetail("topics", "detail", DATA.decisions, {
+    row: d => `<span>${esc(d.topic)}</span><span class="outcome"><i>${d.glyph}</i>${esc(d.chip)}</span>`,
+    detail: d => `<h3>${esc(d.topic)}</h3><p class="verdict"><i>${d.glyph}</i>${esc(d.chip)}</p>
+      <dl><div><dt>My idea</dt><dd>${esc(d.mine)}</dd></div><div><dt>Claude's role</dt><dd>${esc(d.claude)}</dd></div><div><dt>Outcome</dt><dd>${esc(d.outcome)}</dd></div></dl>`,
+  });
+  masterDetail("stages", "stageDetail", DATA.stages, {
+    row: d => `<span>${esc(d.stage)}</span>`,
+    detail: d => `<h3>${esc(d.stage)}</h3>
+      <dl><div><dt>Claude produced</dt><dd>${rich(d.generated)}</dd></div>
+      <div><dt>What I changed or decided</dt><dd>${d.changed ? rich(d.changed) : '<span class="none">Nothing to change at this stage.</span>'}</dd></div></dl>`,
+  });
+}
+
+// ---------- timeline ----------
+function timeline() {
+  const root = document.getElementById("timeline"); root.innerHTML = "";
+  const W = 1100, L = 200, R = 20, PRE = 96, GAP = 56, DW = (W - L - R - PRE - 2 * GAP) / 2;
+  const H0 = 12, H1 = 18, span = (H1 - H0) * 3600e3;
+  const regions = [
+    { label: "Tuesday 27 Oct", x0: L + PRE + GAP, base: Date.UTC(2026, 9, 27) },
+    { label: "Wednesday 28 Oct", x0: L + PRE + GAP + DW + GAP, base: Date.UTC(2026, 9, 28) },
+  ];
+  const x = (t, day) => { const r = regions[day]; return r.x0 + (t - (r.base + H0 * 3600e3 - CET)) / span * DW; };
+  const maxB = Math.max(...DATA.lanes.flatMap(l => l.buckets.map(b => b[1])));
+  const color = m => css(m === "opus" ? "--opus" : "--sonnet");
+  const TOP = 30, BARS = 36, PROMPT = 14;
+  const laneH = l => PROMPT + BARS + 14 + (l.subs.length ? 6 + l.subs.length * 16 : 0) + 14;
+  const lanes = [{ desktop: true }, ...DATA.lanes];
+  const heights = lanes.map(l => l.desktop ? PROMPT + BARS + 28 : laneH(l));
+  const total = TOP + heights.reduce((a, b) => a + b, 0) + 24;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${total}`, role: "img", "aria-label": "Timeline of the design conversation and four Claude Code sessions, showing when I prompted and when Claude worked." }, root);
+
+  const defs = el("defs", {}, svg);
+  const pat = el("pattern", { id: "hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+  el("line", { x1: 0, y1: 0, x2: 0, y2: 6, stroke: css("--bar"), "stroke-width": 1.5 }, pat);
+
+  el("text", { x: L, y: 14, class: "day" }, svg).textContent = "Earlier";
+  regions.forEach(r => {
+    el("text", { x: r.x0, y: 14, class: "day" }, svg).textContent = r.label;
+    for (let h = H0; h <= H1; h += 2) {
+      const gx = r.x0 + (h - H0) / (H1 - H0) * DW;
+      el("line", { x1: gx, x2: gx, y1: TOP - 4, y2: total - 22, stroke: css("--rule"), "stroke-width": 1 }, svg);
+      el("text", { x: gx, y: total - 6, "text-anchor": "middle", "font-size": 11.5 }, svg).textContent = pad(h) + ":00";
+    }
+  });
+
+  let y = TOP;
+  lanes.forEach((l, i) => {
+    const top = y, base = top + PROMPT + BARS;
+    if (i > 0) el("line", { x1: 0, x2: W - R, y1: top, y2: top, stroke: css("--rule"), "stroke-width": 1 }, svg);
+    if (l.desktop) {
+      el("text", { x: 0, y: top + 24, class: "lane-title" }, svg).textContent = "Design conversation";
+      el("text", { x: 0, y: top + 41, "font-size": 12 }, svg).textContent = "Claude Desktop · voice mode";
+      const hy = top + PROMPT;
+      el("rect", { x: L, y: hy, width: PRE, height: BARS, fill: "url(#hatch)", opacity: .55 }, svg);
+      el("rect", { x: L, y: hy, width: PRE, height: BARS, fill: "none", stroke: css("--axis") }, svg);
+      el("text", { x: L + PRE / 2, y: hy + BARS / 2 + 4, "text-anchor": "middle", "font-size": 11.5, class: "halo" }, svg).textContent = "Oct 26–28";
+      const hit = el("rect", { x: L, y: hy, width: PRE, height: BARS, class: "hit" }, svg);
+      bindTip(hit, `Design conversation in Claude Desktop<small>The conversation has no timestamps, so this block marks when it happened, not how long it took.</small>`);
+      y += heights[i]; return;
+    }
+    const c = color(l.model);
+    const lt = el("text", { x: 0, y: top + 24, class: "lane-title" }, svg);
+    const parts = wrap(l.label, 26);
+    parts.forEach((ln, j) => el("tspan", { x: 0, dy: j ? 16 : 0 }, lt).textContent = ln);
+    el("text", { x: 0, y: top + 24 + 16 * parts.length + 1, "font-size": 12 }, svg).textContent =
+      `${modelName(l.model)} · ${l.prompts.length} prompt${l.prompts.length === 1 ? "" : "s"}`;
+    const r = regions[l.day];
+    el("line", { x1: r.x0, x2: r.x0 + DW, y1: base, y2: base, stroke: css("--axis"), "stroke-width": 1 }, svg);
+    el("rect", { x: x(l.start, l.day), y: base + 1, width: Math.max(1, x(l.end, l.day) - x(l.start, l.day)), height: 2, fill: c, opacity: .5 }, svg);
+    const bw = 300e3 / span * DW;
+    l.buckets.forEach(([bt, n]) => {
+      const h = Math.max(3, n / maxB * (BARS - 2)), bx = x(bt, l.day);
+      el("path", { class: "bar", style: `--d:${Math.round((bx - L) / 3)}ms`,
+        d: `M${bx},${base} v${-(h - 2)} a2,2 0 0 1 2,-2 h${Math.max(0, bw - 5)} a2,2 0 0 1 2,2 v${h - 2} z`, fill: c }, svg);
+      const hit = el("rect", { x: bx - .5, y: base - BARS, width: bw + 1, height: BARS, class: "hit" }, svg);
+      bindTip(hit, `${hhmm(bt)}–${hhmm(bt + 300e3)}<small>${n} step${n > 1 ? "s" : ""} by Claude</small>`);
+    });
+    l.prompts.forEach(t => {
+      const px = x(t, l.day);
+      el("line", { x1: px, x2: px, y1: top + 1, y2: top + PROMPT - 2, stroke: css("--ink"), "stroke-width": 2, "stroke-linecap": "round" }, svg);
+      const hit = el("rect", { x: px - 6, y: top - 2, width: 12, height: PROMPT + 4, class: "hit" }, svg);
+      bindTip(hit, `${hhmm(t)}<small>one of my prompts</small>`);
+    });
+    l.subs.forEach((a, si) => {
+      const sy = base + 10 + si * 16, sx = x(a.start, l.day), sw = Math.max(5, x(a.end, l.day) - sx), sc = color(a.model);
+      el("rect", { x: sx, y: sy, width: sw, height: 8, rx: 2, fill: sc }, svg);
+      const txt = `${a.desc} · ${modelName(a.model)}`, tw = txt.length * 5.8;
+      const right = sx + sw + 6 + tw < r.x0 + DW + 40;
+      el("text", { x: right ? sx + sw + 6 : sx - 6, y: sy + 8, "font-size": 11.5, "text-anchor": right ? "start" : "end" }, svg).textContent = txt;
+      const mins = Math.max(1, Math.round((a.end - a.start) / 60e3));
+      const hit = el("rect", { x: sx - 3, y: sy - 3, width: sw + 6, height: 14, class: "hit" }, svg);
+      bindTip(hit, `Subagent: ${esc(a.desc)}<small>${modelName(a.model)} · ${hhmm(a.start)}–${hhmm(a.end)}, about ${mins} min</small>`);
+    });
+    y += heights[i];
+  });
+}
+
+// ---------- theme: light by default, switch is explicit ----------
+const root = document.documentElement;
+function setTheme(t, remember) {
+  root.dataset.theme = t;
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themeSet === t)));
+  if (remember) { try { localStorage.setItem("ai-usage-theme", t); } catch (e) {} }
+  timeline();
+}
+document.querySelectorAll("[data-theme-set]").forEach(b => b.addEventListener("click", () => { document.body.classList.add("no-motion"); setTheme(b.dataset.themeSet, true); }));
+
+panels();
+let saved = null; try { saved = localStorage.getItem("ai-usage-theme"); } catch (e) {}
+setTheme(saved === "dark" ? "dark" : "light", false);
+</script>
+</body>
+</html>
