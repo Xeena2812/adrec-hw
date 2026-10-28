@@ -26,12 +26,17 @@ class VerdictValue(StrEnum):
 
 
 class Event(BaseModel):
-    """A camera event. Paths are plain strings; the prototype has no media files."""
+    """A camera event. Paths are plain strings; the prototype has no media files.
+
+    `note` is simulation-only ground truth: what the real VLM would conclude
+    from the pixels, per condition keyword. Only MockVLM reads it.
+    """
 
     id: str
     timestamp: AwareDatetime  # naive timestamps are rejected
     frame_path: str
     clip_path: str
+    note: dict[str, VerdictValue] = Field(default_factory=dict)
 
 
 class ConditionSpec(BaseModel):

@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api import Services, router
 from app.context import ContextGatherer
+from app.demo import router as demo_router
 from app.domain import Event
 from app.processing import process_event
 from app.repositories.sql import (
@@ -56,6 +57,8 @@ async def run_queue_loop(
             handle(event)
         except Exception:
             logger.exception("processing event %s failed", event.id)
+        finally:
+            events.task_done()  # lets callers tell when an event has been fully handled
         # Let the API serve requests between events when the queue is busy.
         await asyncio.sleep(0)
 
@@ -86,6 +89,7 @@ def create_app(make_services: Callable[[], Services] | None = None) -> FastAPI:
 
         handle = partial(
             process_event,
+            events=services.events,
             conditions=services.conditions,
             gatherer=ContextGatherer(services.events),
             vlm=services.vlm,
@@ -100,6 +104,7 @@ def create_app(make_services: Callable[[], Services] | None = None) -> FastAPI:
 
     app = FastAPI(title="CCTV event analytics", lifespan=lifespan)
     app.include_router(router)
+    app.include_router(demo_router)
     return app
 
 

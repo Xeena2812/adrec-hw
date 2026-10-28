@@ -50,6 +50,7 @@ class Setup:
     def process(self, event: Event):
         return process_event(
             event,
+            events=self.events,
             conditions=self.conditions,
             gatherer=ContextGatherer(self.events),
             vlm=self.vlm,
@@ -110,3 +111,50 @@ def test_alert_is_logged(caplog):
 
     assert any("ALERT" in r.message and "'smoke'" in r.message for r in caplog.records)
 
+
+
+def alerted_events(setup: Setup) -> list[str]:
+    return [setup.verdicts.get(a.verdict_id).event_id for a in setup.alerts.get_all()]
+
+
+def test_yes_continuing_a_recent_yes_raises_no_new_alert():
+    setup = Setup({"smoke": VerdictValue.YES})
+    setup.conditions.create("smoke", FRAME)
+    # 10 s apart counts as the same situation (inclusive), 11 s apart does not.
+    for event_id, seconds in (("evt_0", 0), ("evt_10", 10), ("evt_21", 21)):
+        setup.process(setup.events.create(make_event(event_id, seconds)))
+
+    assert [v.verdict for v in setup.verdicts.get_all()] == [VerdictValue.YES] * 3
+    assert alerted_events(setup) == ["evt_0", "evt_21"]
+
+
+def test_a_persisting_situation_alerts_once():
+    # The window is measured from the previous "yes", not from the last alert,
+    # so a chain of events 10 s apart stays one situation however long it runs.
+    setup = Setup({"smoke": VerdictValue.YES})
+    setup.conditions.create("smoke", FRAME)
+    for seconds in (0, 10, 20, 30, 40):
+        setup.process(setup.events.create(make_event(f"evt_{seconds}", seconds)))
+
+    assert alerted_events(setup) == ["evt_0"]
+
+
+def test_no_or_unsure_between_two_yes_does_not_reset_when_still_within_window():
+    setup = Setup({"smoke": VerdictValue.YES})
+    setup.conditions.create("smoke", FRAME)
+    setup.process(setup.events.create(make_event("evt_0", 0)))
+    setup.vlm.verdicts["smoke"] = VerdictValue.NO
+    setup.process(setup.events.create(make_event("evt_5", 5)))
+    setup.vlm.verdicts["smoke"] = VerdictValue.YES
+    setup.process(setup.events.create(make_event("evt_8", 8)))
+
+    assert alerted_events(setup) == ["evt_0"]
+
+
+def test_dedup_is_per_condition():
+    setup = Setup({"smoke": VerdictValue.YES, "fire": VerdictValue.YES})
+    setup.conditions.create("smoke", FRAME)
+    setup.conditions.create("fire", FRAME)
+    setup.process(setup.events.create(make_event("evt_0", 0)))
+
+    assert len(setup.alerts.get_all()) == 2

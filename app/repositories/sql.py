@@ -7,7 +7,7 @@ created at startup with create_tables(); there are no migrations.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Engine, ForeignKey, Text, func, select
+from sqlalchemy import JSON, DateTime, Engine, ForeignKey, Text, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -33,6 +33,7 @@ class EventRow(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     frame_path: Mapped[str] = mapped_column(Text)
     clip_path: Mapped[str] = mapped_column(Text)
+    note: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
 
 
 class ConditionRow(Base):
@@ -82,7 +83,9 @@ def create_tables(engine: Engine) -> None:
 
 
 def _to_event(row: EventRow) -> Event:
-    return Event(id=row.id, timestamp=row.timestamp, frame_path=row.frame_path, clip_path=row.clip_path)
+    return Event(
+        id=row.id, timestamp=row.timestamp, frame_path=row.frame_path, clip_path=row.clip_path, note=row.note
+    )
 
 
 def _to_condition(row: ConditionRow) -> Condition:
@@ -113,7 +116,7 @@ class SqlEventRepository(EventRepository):
     def create(self, event: Event) -> Event:
         try:
             with self._sessions.begin() as session:
-                session.add(EventRow(**event.model_dump()))
+                session.add(EventRow(**event.model_dump(mode="json")))
         except IntegrityError as exc:
             # Events have no foreign keys, so the only possible violation is the primary key.
             raise DuplicateEventError(event.id) from exc
