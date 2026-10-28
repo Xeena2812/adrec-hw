@@ -2,6 +2,17 @@
 
 A Dockerized prototype of an analytics backend that checks free-text user alert conditions ("alert me if someone loiters in front of the embassy") against CCTV camera events. The camera's built-in detector fires an event with a trigger frame and a 10 s clip, and re-fires about every 10 s while a situation persists. The ~27B Qwen vision-language model (VLM) is mocked behind an interface. What would change in production is in [production-notes.md](production-notes.md); this note covers what was built and why.
 
+## Design approach: where the VLM's job ends
+
+The main challenge of the task is deciding what the VLM should do and what deterministic code should do. A VLM can return an answer for arbitrary input, and that is what makes free-text conditions possible at all. But its output is hard to test, trace and reproduce. Deterministic code is reliable and traceable, but it can't interpret a sentence or an image.
+
+The split:
+
+- **The VLM does the two jobs that need language and vision understanding.** It classifies each user condition once, when the condition is created, deciding which evidence the condition needs. Then, for every event, it judges whether the condition holds on the evidence it is handed, returning `yes`, `no` or `unsure` with its reasoning.
+- **Deterministic code does everything around those two jobs.** It decides which events and frames make up the evidence, when a condition is evaluated, what is stored, and when a `yes` becomes an alert.
+
+As a result, every verdict can be traced to the exact events the model saw (`verdict_evidence`), and the number of model calls per event is fixed. The whole pipeline can also be tested with the model mocked. The cost is flexibility: the evidence types are a fixed set chosen by code. Letting the model gather its own evidence (an agentic loop) is the other end of the spectrum. It was considered and rejected; see the key decisions and the production notes.
+
 ## 1. Components
 
 | Component | Where | Responsibility |
