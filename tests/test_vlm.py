@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.domain import Context, Event, EvidenceType, SceneNote, VerdictValue
-from app.vlm import LOITER_MIN_FRAMES, MockVLM
+from app.vlm import LOITER_MAX_GAP, LOITER_MIN_FRAMES, MockVLM
 
 YES, NO, UNSURE = VerdictValue.YES, VerdictValue.NO, VerdictValue.UNSURE
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
@@ -116,6 +116,28 @@ def test_loitering_counts_each_person_separately():
 def test_loitering_only_counts_people_in_the_current_frame():
     result = evaluate(LOITER, frame(0, ("p1",)), frame(10, ("p1",)), frame(20, ("p1",)), frame(30, ("p2",)))
     assert result.verdict is UNSURE
+
+
+def test_loitering_run_is_broken_by_a_gap_over_the_limit():
+    assert LOITER_MAX_GAP == timedelta(seconds=20)
+    # 21 s between the first two frames: only the last two sightings form a run.
+    result = evaluate(LOITER, frame(0, ("p1",)), frame(21, ("p1",)), frame(31, ("p1",)))
+    assert result.verdict is UNSURE
+    # The same gap right before the current frame leaves the current frame alone.
+    result = evaluate(LOITER, frame(0, ("p1",)), frame(10, ("p1",)), frame(31, ("p1",)))
+    assert result.verdict is UNSURE
+    assert "1 consecutive frame(s)" in result.reasoning
+
+
+def test_loitering_run_survives_a_gap_at_the_limit():
+    result = evaluate(LOITER, frame(0, ("p1",)), frame(20, ("p1",)), frame(40, ("p1",)))
+    assert result.verdict is YES
+
+
+def test_loitering_gap_is_measured_between_adjacent_frames_not_across_the_run():
+    # 60 s from first to last, but never more than 20 s between neighbours.
+    events = [frame(20 * i, ("p1",)) for i in range(4)]
+    assert evaluate(LOITER, *events).verdict is YES
 
 
 def test_loitering_run_may_be_longer_than_the_minimum():

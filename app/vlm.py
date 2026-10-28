@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 
 from app.domain import ConditionSpec, Context, Event, EvidenceType, VerdictValue, VLMResult
 
@@ -25,6 +26,11 @@ class VLM(ABC):
 # one, before the mock calls it loitering.
 LOITER_MIN_FRAMES = 3
 
+# Two sightings of a person further apart than this are not one continuous
+# stay. Cameras re-fire about every 10 s while a situation persists, so 20 s
+# tolerates one missed re-fire; a gap of exactly this long still counts.
+LOITER_MAX_GAP = timedelta(seconds=20)
+
 Evaluator = Callable[[str, Context], VLMResult]
 
 
@@ -37,13 +43,14 @@ def _evaluate_loitering(condition_text: str, context: Context) -> VLMResult:
 
     no: nobody in the current frame. yes: someone's run of consecutive frames
     ending at the current one reaches LOITER_MIN_FRAMES. unsure: someone is
-    there, but not (yet) long enough to tell. A frame without the person
-    breaks their run.
+    there, but not (yet) long enough to tell. A frame without the person, or
+    a gap of more than LOITER_MAX_GAP between two adjacent frames, breaks
+    their run.
     """
     *earlier, current = context.events
     if not current.note.people:
         return _result(VerdictValue.NO, f"nobody visible in {current.frame_path}")
-    runs = {person: _run_length(person, earlier) for person in current.note.people}
+    runs = {person: _run_length(person, earlier, current) for person in current.note.people}
     person, run = max(runs.items(), key=lambda item: item[1])
     if run >= LOITER_MIN_FRAMES:
         return _result(VerdictValue.YES, f"{person} visible in {run} consecutive frames (>= {LOITER_MIN_FRAMES})")
@@ -53,13 +60,19 @@ def _evaluate_loitering(condition_text: str, context: Context) -> VLMResult:
     )
 
 
-def _run_length(person: str, earlier: list[Event]) -> int:
-    """Consecutive frames ending at the current one that show the person (who is in the current frame)."""
+def _run_length(person: str, earlier: list[Event], current: Event) -> int:
+    """Consecutive frames ending at the current one that show the person (who is in the current frame).
+
+    Walking back from the current frame, the run ends at the first frame that
+    lacks the person or lies more than LOITER_MAX_GAP before the frame after it.
+    """
     run = 1
+    later = current
     for event in reversed(earlier):
-        if person not in event.note.people:
+        if person not in event.note.people or later.timestamp - event.timestamp > LOITER_MAX_GAP:
             break
         run += 1
+        later = event
     return run
 
 
